@@ -281,13 +281,23 @@ document.getElementById('restart').addEventListener('click',reset);
 // ---------- game over check ----------
 function checkOverflow(dt){
   const now=performance.now();
-  let danger=false;
-  for(const b of bodies){
-    if(b.bounds.min.y < DANGER_Y
-       && b.speed<0.35 && now-b.born>1200){ danger=true; break; }
+  // cull escaped parts so they can't hold the movement clock hostage
+  for(let i=bodies.length-1;i>=0;i--){
+    const p=bodies[i].position;
+    if(p.y>H+150||p.x<-150||p.x>W+150){
+      Composite.remove(engine.world,bodies[i]);
+      bodies.splice(i,1);
+    }
   }
-  dangerTimer = danger ? dangerTimer+dt : 0;
-  if(dangerTimer>1800){
+  let danger=false, moving=false;
+  for(const b of bodies){
+    if(b.speed>=0.35) moving=true;
+    if(b.bounds.min.y < DANGER_Y
+       && b.speed<0.35 && now-b.born>1200) danger=true;
+  }
+  if(!danger) dangerTimer=0;          // nothing above the line: reset
+  else if(!moving) dangerTimer+=dt;   // parts still moving: clock paused
+  if(dangerTimer>5000){
     gameOver=true;
     best=Math.max(best,score);
     document.getElementById('finalScore').textContent=score;
