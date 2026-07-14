@@ -123,6 +123,12 @@
     border:2px solid var(--safety-yellow);
     padding:10px 22px;border-radius:2px;cursor:pointer;
   }
+  #scoldLine{
+    display:none;
+    color:#ff6a4d;font-weight:700;
+    font-size:12px;letter-spacing:.06em;
+    line-height:1.6;
+  }
   #newBest{
     display:none;
     color:var(--safety-yellow);font-weight:700;
@@ -185,7 +191,8 @@
 <div id="gameWrap">
   <canvas id="game" width="480" height="640"></canvas>
   <div id="overlay">
-    <h2>BIN OVERFLOW</h2>
+    <h2 id="overTitle">BIN OVERFLOW</h2>
+    <p id="scoldLine">Rapid-fire dropping detected. The foreman saw everything.<br>Score voided &mdash; real machinists take their time.</p>
     <p id="newBest">&#9733; NEW BEST &#9733;</p>
     <p>SHIFT SCORE &nbsp;<b id="finalScore">0</b><br>
        BIGGEST PART &nbsp;<b id="statPart">&mdash;</b> &nbsp;&middot;&nbsp; MERGES &nbsp;<b id="statMerges">0</b><br>
@@ -343,6 +350,8 @@ let canDrop, sparks, dangerTimer, lastDropped;
 let aiming=false, paused=false, shake=0, popups=[];
 let combo=1, lastMergeAt=0, totalMerges=0, maxTier=0;
 let nextKlax=0, klaxHi=false;
+const SPAM_N=8, SPAM_MS=2400;
+let dropTimes=[];
 let found=new Set(JSON.parse(lsGet('cb.found')||'[]'));
 
 function reset(){
@@ -358,7 +367,7 @@ function reset(){
   Events.on(engine,'collisionStart',onCollision);
   score=0; gameOver=false; canDrop=true;
   dropX=W/2; sparks=[]; dangerTimer=0; mergeQueue=[]; lastDropped=null;
-  aiming=false; shake=0; popups=[];
+  aiming=false; shake=0; popups=[]; dropTimes=[];
   combo=1; lastMergeAt=0; totalMerges=0; maxTier=0;
   nextKlax=0;
   rng = daily ? mulberry32([...dayKey].reduce((a,c)=>((a*33)^c.charCodeAt(0))>>>0,5381)) : Math.random;
@@ -459,6 +468,24 @@ function clientToX(e){
   const rect=canvas.getBoundingClientRect();
   return (e.clientX-rect.left)*(W/rect.width);
 }
+function recordDrop(now){
+  dropTimes.push(now);
+  if(dropTimes.length>SPAM_N) dropTimes.shift();
+  if(dropTimes.length===SPAM_N && now-dropTimes[0]<SPAM_MS) violationEnd();
+}
+function violationEnd(){
+  gameOver=true;
+  document.getElementById('overTitle').textContent='SAFETY VIOLATION';
+  document.getElementById('scoldLine').style.display='block';
+  document.getElementById('finalScore').textContent=score+' (VOIDED)';
+  document.getElementById('statPart').textContent=TIERS[maxTier].name;
+  document.getElementById('statMerges').textContent=totalMerges;
+  document.getElementById('newBest').style.display='none';
+  document.getElementById('bestLine').textContent=(daily?'DAILY BEST  ':'ALL-TIME BEST  ')+best+'  (unchanged)';
+  sKlaxon(false); setTimeout(()=>sKlaxon(false),220);
+  overlay.classList.add('show');
+}
+
 canvas.addEventListener('pointerdown',e=>{
   ac(); // unlock audio on first user gesture (iOS requirement)
   if(gameOver||paused) return;
@@ -477,6 +504,7 @@ canvas.addEventListener('pointerup',e=>{
   const hw=TIERS[currentTier].hw;
   const x=Math.max(WALL+hw+2,Math.min(W-WALL-hw-2,dropX));
   lastDropped=spawn(currentTier,x,DROP_Y);
+  recordDrop(performance.now());
   currentTier=nextTier; nextTier=randTier();
   drawNext();
   canDrop=false;
@@ -505,6 +533,8 @@ function checkOverflow(dt){
   else if(!moving) dangerTimer+=dt;   // parts still moving: clock paused
   if(dangerTimer>5000){
     gameOver=true;
+    document.getElementById('overTitle').textContent='BIN OVERFLOW';
+    document.getElementById('scoldLine').style.display='none';
     const isNew = score>prevBest;
     best=Math.max(prevBest,score);
     lsSet(daily?'cb.daily.'+dayKey:'cb.best', best);
