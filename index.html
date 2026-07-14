@@ -77,6 +77,7 @@
     display:block;width:100%;height:auto;
     border-radius:4px;
     cursor:crosshair;
+    touch-action:none;
   }
   #overlay{
     position:absolute;inset:0;display:none;
@@ -211,7 +212,7 @@
 
 <footer>
   <span>AIM: DRAG &nbsp;·&nbsp; DROP: RELEASE</span>
-  <span>MERGE MATCHING PARTS</span>
+  <span>MERGE MATCHING PARTS &middot; v3</span>
 </footer>
 
 <script>
@@ -350,7 +351,7 @@ let canDrop, sparks, dangerTimer, lastDropped;
 let aiming=false, paused=false, shake=0, popups=[];
 let combo=1, lastMergeAt=0, totalMerges=0, maxTier=0;
 let nextKlax=0, klaxHi=false;
-const SPAM_N=8, SPAM_MS=2400;
+const SPAM_N=10, SPAM_MS=2500;  // counts ALL tap attempts, incl. gated ones
 let dropTimes=[];
 let found=new Set(JSON.parse(lsGet('cb.found')||'[]'));
 
@@ -500,11 +501,13 @@ canvas.addEventListener('pointerup',e=>{
   if(!aiming) return;
   aiming=false;
   dropX=clientToX(e);
-  if(gameOver||paused||!canDrop) return;
+  if(gameOver||paused) return;
+  recordDrop(performance.now());
+  if(gameOver) return;           // the tap that trips the violation doesn't drop
+  if(!canDrop) return;
   const hw=TIERS[currentTier].hw;
   const x=Math.max(WALL+hw+2,Math.min(W-WALL-hw-2,dropX));
   lastDropped=spawn(currentTier,x,DROP_Y);
-  recordDrop(performance.now());
   currentTier=nextTier; nextTier=randTier();
   drawNext();
   canDrop=false;
