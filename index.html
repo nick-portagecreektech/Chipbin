@@ -99,6 +99,65 @@
   }
   #restart:hover{filter:brightness(1.08)}
   #restart:focus-visible{outline:3px solid var(--ink);outline-offset:2px}
+  #bar{
+    width:min(480px,100%);
+    display:flex;gap:8px;
+    padding:0 2px 8px;
+  }
+  .tbtn{
+    flex:1;
+    font-family:'Chakra Petch',sans-serif;font-weight:700;
+    font-size:11px;letter-spacing:.14em;
+    background:linear-gradient(#2b3034,#1d2124);
+    color:var(--steel);
+    border:1px solid #454c53;border-radius:3px;
+    padding:8px 4px;cursor:pointer;
+  }
+  .tbtn:hover{color:var(--ink)}
+  .tbtn:focus-visible{outline:2px solid var(--safety-yellow);outline-offset:1px}
+  .btnrow{display:flex;gap:10px}
+  #shareBtn{
+    font-family:'Chakra Petch',sans-serif;font-weight:700;
+    font-size:14px;letter-spacing:.2em;
+    background:transparent;color:var(--safety-yellow);
+    border:2px solid var(--safety-yellow);
+    padding:10px 22px;border-radius:2px;cursor:pointer;
+  }
+  #newBest{
+    display:none;
+    color:var(--safety-yellow);font-weight:700;
+    font-size:15px;letter-spacing:.3em;
+  }
+  #catalog{
+    position:absolute;inset:0;display:none;
+    flex-direction:column;align-items:center;justify-content:center;gap:14px;
+    background:rgba(20,23,26,.94);
+    border-radius:4px;text-align:center;
+  }
+  #catalog.show{display:flex}
+  #catalog h2{
+    font-family:'Saira Stencil One',sans-serif;
+    color:var(--safety-yellow);font-size:22px;letter-spacing:.08em;
+  }
+  #catGrid{
+    display:grid;grid-template-columns:repeat(5,1fr);gap:8px;
+    padding:0 14px;
+  }
+  .catCell{
+    background:linear-gradient(#2b3034,#1d2124);
+    border:1px solid #454c53;border-radius:3px;
+    padding:6px 4px 4px;
+  }
+  .catCell span{
+    display:block;font-size:8px;letter-spacing:.08em;color:var(--steel);
+    margin-top:2px;white-space:nowrap;
+  }
+  #catClose{
+    font-family:'Chakra Petch',sans-serif;font-weight:700;
+    font-size:13px;letter-spacing:.2em;
+    background:var(--safety-yellow);color:#1d2124;border:none;
+    padding:10px 24px;border-radius:2px;cursor:pointer;
+  }
   footer{
     width:min(480px,100%);
     display:flex;justify-content:space-between;
@@ -117,17 +176,34 @@
   </div>
 </header>
 
+<div id="bar">
+  <button class="tbtn" id="partsBtn">PARTS</button>
+  <button class="tbtn" id="dailyBtn">FREE PLAY</button>
+  <button class="tbtn" id="muteBtn">SOUND ON</button>
+</div>
+
 <div id="gameWrap">
   <canvas id="game" width="480" height="640"></canvas>
   <div id="overlay">
     <h2>BIN OVERFLOW</h2>
-    <p>SHIFT SCORE &nbsp;<b id="finalScore">0</b><br><span id="bestLine"></span></p>
-    <button id="restart">CLOCK BACK IN</button>
+    <p id="newBest">&#9733; NEW BEST &#9733;</p>
+    <p>SHIFT SCORE &nbsp;<b id="finalScore">0</b><br>
+       BIGGEST PART &nbsp;<b id="statPart">&mdash;</b> &nbsp;&middot;&nbsp; MERGES &nbsp;<b id="statMerges">0</b><br>
+       <span id="bestLine"></span></p>
+    <div class="btnrow">
+      <button id="restart">CLOCK BACK IN</button>
+      <button id="shareBtn">SHARE</button>
+    </div>
+  </div>
+  <div id="catalog">
+    <h2>PARTS CATALOG</h2>
+    <div id="catGrid"></div>
+    <button id="catClose">CLOSE</button>
   </div>
 </div>
 
 <footer>
-  <span>AIM: MOUSE &nbsp;·&nbsp; DROP: CLICK</span>
+  <span>AIM: DRAG &nbsp;·&nbsp; DROP: RELEASE</span>
   <span>MERGE MATCHING PARTS</span>
 </footer>
 
@@ -176,9 +252,98 @@ const nextCtx=document.getElementById('nextCanvas').getContext('2d');
 const scoreEl=document.getElementById('score');
 const overlay=document.getElementById('overlay');
 
+// ---------- storage (guarded: previews may block localStorage) ----------
+function lsGet(k){try{return (typeof localStorage!=='undefined')?localStorage.getItem(k):null}catch(e){return null}}
+function lsSet(k,v){try{if(typeof localStorage!=='undefined')localStorage.setItem(k,v)}catch(e){}}
+
+// ---------- audio (synthesized, no assets) ----------
+let AC=null, muted=lsGet('cb.mute')==='1', noiseBuf=null;
+function ac(){
+  if(muted) return null;
+  if(!AC){
+    try{
+      const Ctor=(typeof window!=='undefined')&&(window.AudioContext||window.webkitAudioContext);
+      if(!Ctor) return null;
+      AC=new Ctor();
+    }catch(e){return null}
+  }
+  if(AC.state==='suspended') AC.resume();
+  return AC;
+}
+function noiseBuffer(a){
+  if(!noiseBuf){
+    noiseBuf=a.createBuffer(1,a.sampleRate*.2,a.sampleRate);
+    const d=noiseBuf.getChannelData(0);
+    for(let i=0;i<d.length;i++) d[i]=Math.random()*2-1;
+  }
+  return noiseBuf;
+}
+function sClank(tier,vol){
+  const a=ac(); if(!a) return;
+  const t=a.currentTime;
+  const src=a.createBufferSource(); src.buffer=noiseBuffer(a);
+  const bp=a.createBiquadFilter(); bp.type='bandpass';
+  bp.frequency.value=2200-tier*160; bp.Q.value=1.2;
+  const g=a.createGain();
+  g.gain.setValueAtTime(Math.min(.2,vol),t);
+  g.gain.exponentialRampToValueAtTime(.0001,t+.08+tier*.008);
+  src.connect(bp); bp.connect(g); g.connect(a.destination);
+  src.start(t); src.stop(t+.2);
+  const o=a.createOscillator(), g2=a.createGain();
+  o.type='sine';
+  o.frequency.setValueAtTime(150-tier*7,t);
+  o.frequency.exponentialRampToValueAtTime(45,t+.12);
+  g2.gain.setValueAtTime(Math.min(.22,vol),t);
+  g2.gain.exponentialRampToValueAtTime(.0001,t+.14);
+  o.connect(g2); g2.connect(a.destination);
+  o.start(t); o.stop(t+.16);
+}
+function sMerge(tier){
+  const a=ac(); if(!a) return;
+  const t=a.currentTime;
+  for(const det of [0,7]){
+    const o=a.createOscillator(), g=a.createGain();
+    o.type='square';
+    const f=(880-tier*55)*Math.pow(2,det/1200);
+    o.frequency.setValueAtTime(f,t);
+    o.frequency.exponentialRampToValueAtTime(f*.75,t+.2);
+    g.gain.setValueAtTime(.1,t);
+    g.gain.exponentialRampToValueAtTime(.0001,t+.22+tier*.02);
+    o.connect(g); g.connect(a.destination);
+    o.start(t); o.stop(t+.32);
+  }
+  if(tier===TIERS.length-1){ // the wheel lands with a deep clunk
+    const o=a.createOscillator(), g=a.createGain();
+    o.type='sine'; o.frequency.setValueAtTime(70,t);
+    g.gain.setValueAtTime(.28,t);
+    g.gain.exponentialRampToValueAtTime(.0001,t+.8);
+    o.connect(g); g.connect(a.destination);
+    o.start(t); o.stop(t+.85);
+  }
+}
+function sKlaxon(hi){
+  const a=ac(); if(!a) return;
+  const t=a.currentTime;
+  const o=a.createOscillator(), g=a.createGain();
+  o.type='triangle'; o.frequency.value=hi?680:510;
+  g.gain.setValueAtTime(.07,t);
+  g.gain.exponentialRampToValueAtTime(.0001,t+.18);
+  o.connect(g); g.connect(a.destination);
+  o.start(t); o.stop(t+.2);
+}
+
+// ---------- seeded rng for daily mode ----------
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+function todayKey(){const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')}
+let daily=false, dayKey=todayKey(), rng=Math.random;
+
 // ---------- state ----------
-let engine, bodies, score, best=0, gameOver, dropX, currentTier, nextTier;
+let engine, bodies, score, best=0, prevBest=0, gameOver, dropX, currentTier, nextTier;
 let canDrop, sparks, dangerTimer, lastDropped;
+let aiming=false, paused=false, shake=0, popups=[];
+let combo=1, lastMergeAt=0, totalMerges=0, maxTier=0;
+let nextKlax=0, klaxHi=false;
+let found=new Set(JSON.parse(lsGet('cb.found')||'[]'));
 
 function reset(){
   engine=Engine.create({gravity:{x:0, y:1.1, scale:0.001}});
@@ -193,6 +358,12 @@ function reset(){
   Events.on(engine,'collisionStart',onCollision);
   score=0; gameOver=false; canDrop=true;
   dropX=W/2; sparks=[]; dangerTimer=0; mergeQueue=[]; lastDropped=null;
+  aiming=false; shake=0; popups=[];
+  combo=1; lastMergeAt=0; totalMerges=0; maxTier=0;
+  nextKlax=0;
+  rng = daily ? mulberry32([...dayKey].reduce((a,c)=>((a*33)^c.charCodeAt(0))>>>0,5381)) : Math.random;
+  prevBest = +(lsGet(daily?'cb.daily.'+dayKey:'cb.best')||0);
+  best = prevBest;
   currentTier=randTier(); nextTier=randTier();
   scoreEl.textContent='0';
   overlay.classList.remove('show');
@@ -202,7 +373,7 @@ function reset(){
 function randTier(){
   // weight toward small parts
   const w=[5,4,3,2,1], t=w.reduce((a,b)=>a+b);
-  let x=Math.random()*t;
+  let x=rng()*t;
   for(let i=0;i<SPAWNABLE;i++){ if((x-=w[i])<0) return i; }
   return 0;
 }
@@ -216,7 +387,12 @@ function spawn(tier,x,y,still){
   else b=Bodies.rectangle(x,y,t.r*s.w,t.r*s.h,
     s.ch ? {...opts, chamfer:{radius:t.r*s.ch}} : opts);
   b.tier=tier; b.born=performance.now();
-  if(!still) Body.setAngularVelocity(b,(Math.random()-.5)*.15);
+  maxTier=Math.max(maxTier,tier);
+  if(!found.has(tier)){
+    found.add(tier);
+    lsSet('cb.found',JSON.stringify([...found]));
+  }
+  if(!still) Body.setAngularVelocity(b,(rng()-.5)*.15);
   Composite.add(engine.world,b);
   bodies.push(b);
   return b;
@@ -225,7 +401,17 @@ function spawn(tier,x,y,still){
 // ---------- merging ----------
 let mergeQueue=[];
 function onCollision(ev){
+  const now=performance.now();
   for(const {bodyA:a,bodyB:b} of ev.pairs){
+    // impact sound on any noteworthy contact (parts or walls)
+    const part=(a.tier!==undefined)?a:(b.tier!==undefined)?b:null;
+    if(part){
+      const impact=Math.hypot(a.velocity.x-b.velocity.x,a.velocity.y-b.velocity.y);
+      if(impact>2.2 && now-(part.sndAt||0)>120){
+        part.sndAt=now;
+        sClank(part.tier,impact*.03);
+      }
+    }
     if(a.tier===undefined||b.tier===undefined) continue;
     if(a.tier!==b.tier||a.tier>=TIERS.length-1) continue;
     if(a.consumed||b.consumed) continue;
@@ -245,8 +431,16 @@ function processMerges(){
     const nb=spawn(a.tier+1,mx,my,true);
     Body.setVelocity(nb,{x:vx,y:vy});
     nb.flash=1;
-    score+=TIERS[a.tier+1].score;
+    const now=performance.now();
+    combo = (now-lastMergeAt<1500) ? combo+1 : 1;
+    lastMergeAt=now;
+    const pts=nt.score*combo;
+    score+=pts;
+    totalMerges++;
     scoreEl.textContent=score;
+    popups.push({x:mx,y:my-nt.r,text:'+'+pts+(combo>1?'  x'+combo:''),t:0});
+    shake=Math.min(16, shake+2+(a.tier+1)*.8);
+    sMerge(a.tier+1);
     emitSparks(mx,my,nt.r);
   }
   mergeQueue=[];
@@ -265,10 +459,21 @@ function clientToX(e){
   const rect=canvas.getBoundingClientRect();
   return (e.clientX-rect.left)*(W/rect.width);
 }
-canvas.addEventListener('pointermove',e=>{ dropX=clientToX(e); });
 canvas.addEventListener('pointerdown',e=>{
+  ac(); // unlock audio on first user gesture (iOS requirement)
+  if(gameOver||paused) return;
+  aiming=true;
+  try{canvas.setPointerCapture(e.pointerId)}catch(err){}
   dropX=clientToX(e);
-  if(gameOver||!canDrop) return;
+});
+canvas.addEventListener('pointermove',e=>{
+  if(aiming||e.pointerType==='mouse') dropX=clientToX(e);
+});
+canvas.addEventListener('pointerup',e=>{
+  if(!aiming) return;
+  aiming=false;
+  dropX=clientToX(e);
+  if(gameOver||paused||!canDrop) return;
   const hw=TIERS[currentTier].hw;
   const x=Math.max(WALL+hw+2,Math.min(W-WALL-hw-2,dropX));
   lastDropped=spawn(currentTier,x,DROP_Y);
@@ -276,6 +481,7 @@ canvas.addEventListener('pointerdown',e=>{
   drawNext();
   canDrop=false;
 });
+canvas.addEventListener('pointercancel',()=>{aiming=false;});
 document.getElementById('restart').addEventListener('click',reset);
 
 // ---------- game over check ----------
@@ -299,9 +505,14 @@ function checkOverflow(dt){
   else if(!moving) dangerTimer+=dt;   // parts still moving: clock paused
   if(dangerTimer>5000){
     gameOver=true;
-    best=Math.max(best,score);
+    const isNew = score>prevBest;
+    best=Math.max(prevBest,score);
+    lsSet(daily?'cb.daily.'+dayKey:'cb.best', best);
     document.getElementById('finalScore').textContent=score;
-    document.getElementById('bestLine').textContent='BEST THIS SESSION  '+best;
+    document.getElementById('statPart').textContent=TIERS[maxTier].name;
+    document.getElementById('statMerges').textContent=totalMerges;
+    document.getElementById('newBest').style.display=isNew?'block':'none';
+    document.getElementById('bestLine').textContent=(daily?'DAILY BEST  ':'ALL-TIME BEST  ')+best;
     overlay.classList.add('show');
   }
 }
@@ -705,8 +916,9 @@ function drawDropper(){
   ctx.translate(x,DROP_Y);
   t.draw(ctx,t.r);
   ctx.restore();
-  // drop guide
-  ctx.strokeStyle='rgba(242,183,7,.15)';ctx.lineWidth=1;
+  // drop guide (brighter while aiming)
+  ctx.strokeStyle=aiming?'rgba(242,183,7,.5)':'rgba(242,183,7,.15)';
+  ctx.lineWidth=aiming?1.5:1;
   ctx.setLineDash([4,6]);
   ctx.beginPath();ctx.moveTo(x,DROP_Y+t.hh);ctx.lineTo(x,H-WALL);ctx.stroke();
   ctx.setLineDash([]);
@@ -736,11 +948,109 @@ function drawNext(){
   nextCtx.restore();
 }
 
+function drawPopups(dt){
+  for(let i=popups.length-1;i>=0;i--){
+    const p=popups[i];
+    p.t+=dt;
+    if(p.t>1100){popups.splice(i,1);continue;}
+    const a=p.t<800?1:(1100-p.t)/300;
+    ctx.globalAlpha=a;
+    ctx.font="700 16px 'Chakra Petch',sans-serif";
+    ctx.textAlign='center';
+    ctx.fillStyle='#1d2124';
+    ctx.fillText(p.text,p.x+1.5,p.y-p.t*.03+1.5);
+    ctx.fillStyle='#f2b707';
+    ctx.fillText(p.text,p.x,p.y-p.t*.03);
+    ctx.globalAlpha=1;ctx.textAlign='left';
+  }
+}
+
+// ---------- catalog / daily / mute / share ----------
+const catalog=document.getElementById('catalog');
+const catGrid=document.getElementById('catGrid');
+const dailyBtn=document.getElementById('dailyBtn');
+const muteBtn=document.getElementById('muteBtn');
+muteBtn.textContent=muted?'SOUND OFF':'SOUND ON';
+
+function buildCatalog(){
+  catGrid.innerHTML='';
+  TIERS.forEach((t,i)=>{
+    const cell=document.createElement('div');
+    cell.className='catCell';
+    const cc=document.createElement('canvas');
+    cc.width=64;cc.height=64;
+    const c2=cc.getContext('2d');
+    c2.save();c2.translate(32,32);
+    if(found.has(i)){
+      const s=Math.min(1,26/t.r);
+      c2.scale(s,s);
+      t.draw(c2,t.r);
+    }else{
+      c2.fillStyle='#2b3034';
+      c2.beginPath();c2.arc(0,0,24,0,7);c2.fill();
+      c2.strokeStyle='#454c53';c2.lineWidth=2;c2.stroke();
+      c2.fillStyle='#6d7680';
+      c2.font="700 26px 'Chakra Petch',sans-serif";
+      c2.textAlign='center';c2.textBaseline='middle';
+      c2.fillText('?',0,2);
+    }
+    c2.restore();
+    const label=document.createElement('span');
+    label.textContent=found.has(i)?t.name:'???';
+    cell.appendChild(cc);cell.appendChild(label);
+    catGrid.appendChild(cell);
+  });
+}
+document.getElementById('partsBtn').addEventListener('click',()=>{
+  buildCatalog();
+  catalog.classList.add('show');
+  paused=true;
+});
+document.getElementById('catClose').addEventListener('click',()=>{
+  catalog.classList.remove('show');
+  paused=false;
+});
+dailyBtn.addEventListener('click',()=>{
+  daily=!daily;
+  dayKey=todayKey();
+  dailyBtn.textContent=daily?('DAILY '+dayKey.slice(5)):'FREE PLAY';
+  reset();
+});
+muteBtn.addEventListener('click',()=>{
+  muted=!muted;
+  lsSet('cb.mute',muted?'1':'0');
+  muteBtn.textContent=muted?'SOUND OFF':'SOUND ON';
+});
+document.getElementById('shareBtn').addEventListener('click',async()=>{
+  const btn=document.getElementById('shareBtn');
+  const text='CHIP BIN \u2014 '+score+' pts'+(daily?' \u00b7 Daily '+dayKey:'')+' \u00b7 biggest part: '+TIERS[maxTier].name;
+  const url=(typeof location!=='undefined')?location.href.split('#')[0]:'';
+  try{
+    if(typeof navigator!=='undefined'&&navigator.share){
+      let payload={text,url};
+      try{
+        const blob=await new Promise(r=>canvas.toBlob(r,'image/png'));
+        if(blob){
+          const file=new File([blob],'chip-bin.png',{type:'image/png'});
+          if(navigator.canShare&&navigator.canShare({files:[file]})) payload={files:[file],text,url};
+        }
+      }catch(e){}
+      await navigator.share(payload);
+      return;
+    }
+    if(typeof navigator!=='undefined'&&navigator.clipboard){
+      await navigator.clipboard.writeText(text+' '+url);
+      btn.textContent='COPIED!';
+      setTimeout(()=>btn.textContent='SHARE',1200);
+    }
+  }catch(e){/* user cancelled share sheet */}
+});
+
 // ---------- main loop ----------
 let last=performance.now();
 function loop(now){
   const dt=Math.min(now-last,50); last=now;
-  if(!gameOver){
+  if(!gameOver && !paused){
     Engine.update(engine,1000/60);
     processMerges();
     checkOverflow(dt);
@@ -749,12 +1059,25 @@ function loop(now){
       canDrop = !lastDropped || !bodies.includes(lastDropped)
         || lastDropped.bounds.min.y > DROP_Y + TIERS[currentTier].hh + 6;
     }
+    // overflow klaxon while the timer runs
+    if(dangerTimer>0){
+      if(now>=nextKlax){
+        sKlaxon(klaxHi);
+        klaxHi=!klaxHi;
+        nextKlax=now+480;
+      }
+    }else nextKlax=0;
   }
+  shake=Math.max(0,shake-dt*.012);
   ctx.clearRect(0,0,W,H);
+  ctx.save();
+  if(shake>0) ctx.translate((Math.random()-.5)*shake,(Math.random()-.5)*shake);
   drawBin();
   for(const b of bodies) drawBody(b);
   drawSparks();
+  drawPopups(dt);
   drawDropper();
+  ctx.restore();
   requestAnimationFrame(loop);
 }
 
